@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "191424401153",
+    "project_id": "infanteria-de-marina",
+    "storage_bucket": "infanteria-de-marina.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:191424401153:android:d3392bb0c1697850f01500",
+        "android_client_info": {
+          "package_name": "com.example.imb"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAKb2e3O_u8TYikMfwN3hMbzVeXK6UMDwE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
