@@ -17,10 +17,13 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -47,7 +50,22 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
+import coil.compose.SubcomposeAsyncImage
+import coil.request.ImageRequest
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.content.ContentValues
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
+import android.widget.Toast
+import java.io.File
+import java.io.FileOutputStream
+import java.io.OutputStream
+import android.content.Context
 
 import com.example.imb.ui.theme.IMBTheme
 import com.google.firebase.database.DataSnapshot
@@ -131,7 +149,14 @@ fun AppNavigator() {
                     val temp = mutableListOf<MagazineItem>()
                     for (post in snapshot.children) {
                         try {
-                            post.getValue(MagazineItem::class.java)?.let { temp.add(it.copy(id = post.key ?: "")) }
+                            val mag = MagazineItem(
+                                id = post.key ?: "",
+                                title = post.child("title").value?.toString() ?: "",
+                                date = post.child("date").value?.toString() ?: "",
+                                coverUrl = (post.child("coverUrl").value ?: post.child("cover_url").value)?.toString() ?: "",
+                                fileUrl = (post.child("fileUrl").value ?: post.child("file_url").value)?.toString() ?: ""
+                            )
+                            temp.add(mag)
                         } catch (e: Exception) { e.printStackTrace() }
                     }
                     magazineList.clear()
@@ -526,6 +551,9 @@ fun AppleNewsDetail(news: NewsItem?, onBack: () -> Unit) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GalleryScreen(onBack: () -> Unit) {
+    var selectedImageRes by remember { mutableStateOf<Int?>(null) }
+    val context = LocalContext.current
+
     val galleryResources = listOf(
         R.drawable.imb_02,
         R.drawable.imb_03,
@@ -555,20 +583,24 @@ fun GalleryScreen(onBack: () -> Unit) {
         }
     ) { padding ->
         LazyVerticalGrid(
-            columns = GridCells.Fixed(1), // Mosaico vertical de gran impacto
+            columns = GridCells.Fixed(1),
             contentPadding = PaddingValues(0.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
             modifier = Modifier.padding(padding).fillMaxSize()
         ) {
             items(galleryResources) { resId ->
-                Box(modifier = Modifier.fillMaxWidth().height(300.dp)) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(300.dp)
+                        .clickable { selectedImageRes = resId }
+                ) {
                     Image(
                         painter = painterResource(id = resId),
                         contentDescription = null,
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop
                     )
-                    // Filtro de contraste institucional
                     Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.2f)))
                     
                     // Detalle visual en la esquina
@@ -590,92 +622,310 @@ fun GalleryScreen(onBack: () -> Unit) {
             }
         }
     }
+
+    // Pantalla de imagen expandida (Dialog)
+    if (selectedImageRes != null) {
+        Dialog(
+            onDismissRequest = { selectedImageRes = null },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black)
+            ) {
+                // Imagen expandida
+                Image(
+                    painter = painterResource(id = selectedImageRes!!),
+                    contentDescription = null,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .align(Alignment.Center),
+                    contentScale = ContentScale.Fit
+                )
+
+                // Botones de acción
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(24.dp)
+                        .align(Alignment.TopEnd),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    // Botón Descargar
+                    IconButton(
+                        onClick = {
+                            saveImageToGallery(context, selectedImageRes!!)
+                            Toast.makeText(context, "Imagen guardada en Galería", Toast.LENGTH_SHORT).show()
+                        },
+                        modifier = Modifier.background(Color.Black.copy(0.5f), CircleShape)
+                    ) {
+                        Icon(Icons.Default.Download, "Descargar", tint = Color.White)
+                    }
+                    
+                    Spacer(modifier = Modifier.width(16.dp))
+
+                    // Botón Cerrar
+                    IconButton(
+                        onClick = { selectedImageRes = null },
+                        modifier = Modifier.background(Color.Black.copy(0.5f), CircleShape)
+                    ) {
+                        Icon(Icons.Default.Close, "Cerrar", tint = Color.White)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Función auxiliar para guardar imagen
+fun saveImageToGallery(context: Context, resId: Int) {
+    val bitmap = BitmapFactory.decodeResource(context.resources, resId)
+    val filename = "IMB_${System.currentTimeMillis()}.jpg"
+    var fos: OutputStream? = null
+    
+    try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val contentValues = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
+                put(MediaStore.MediaColumns.MIME_TYPE, "image/jpg")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES)
+            }
+            val imageUri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+            fos = imageUri?.let { context.contentResolver.openOutputStream(it) }
+        } else {
+            val imagesDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
+            val image = File(imagesDir, filename)
+            fos = FileOutputStream(image)
+        }
+
+        fos?.use {
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 100, it)
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
+}
+
+// --- PANTALLA: LECTOR DE REVISTA (ESTILO EBOOK) ---
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun MagazineReaderScreen(magazine: MagazineItem, onBack: () -> Unit) {
+    val pages = remember(magazine.fileUrl) {
+        if (magazine.fileUrl.isNotEmpty()) {
+            magazine.fileUrl.split(",").map { it.trim() }
+        } else {
+            listOf(magazine.coverUrl)
+        }
+    }
+    val pagerState = rememberPagerState(pageCount = { pages.size })
+
+    Scaffold(
+        containerColor = Color.Black,
+        topBar = {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 40.dp, start = 16.dp, end = 16.dp)
+            ) {
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier.background(Color.Black.copy(0.5f), CircleShape)
+                ) {
+                    Icon(Icons.Default.Close, null, tint = Color.White)
+                }
+                Text(
+                    text = magazine.title.uppercase(),
+                    modifier = Modifier.align(Alignment.Center),
+                    color = Color.White,
+                    fontWeight = FontWeight.Black,
+                    style = MaterialTheme.typography.labelMedium,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+    ) { padding ->
+        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize(),
+                pageSpacing = 16.dp
+            ) { page ->
+                val pageUrl = pages[page].trim()
+                if (pageUrl.isNotEmpty()) {
+                    SubcomposeAsyncImage(
+                        model = ImageRequest.Builder(LocalContext.current)
+                            .data(pageUrl)
+                            .crossfade(true)
+                            .listener(
+                                onError = { _, result ->
+                                    android.util.Log.e("MagazineReader", "Error loading page $page: ${result.throwable.message}")
+                                }
+                            )
+                            .build(),
+                        contentDescription = "Página ${page + 1}",
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Fit,
+                        loading = {
+                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator(color = MarinesRed)
+                            }
+                        },
+                        error = { state ->
+                            val errorMsg = state.result.throwable.message ?: "Error desconocido"
+                            Column(
+                                modifier = Modifier.fillMaxSize(),
+                                verticalArrangement = Arrangement.Center,
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Icon(Icons.Default.Error, null, tint = MarinesRed, modifier = Modifier.size(48.dp))
+                                Spacer(Modifier.height(8.dp))
+                                Text("Error al cargar página ${page + 1}", color = Color.White)
+                                Text(errorMsg, color = Color.Gray, fontSize = 10.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 16.dp))
+                            }
+                        }
+                    )
+                } else {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("URL Vacía", color = Color.White)
+                    }
+                }
+            }
+
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 40.dp),
+                color = MarinesRed,
+                shape = RoundedCornerShape(4.dp)
+            ) {
+                Text(
+                    text = "PÁGINA ${pagerState.currentPage + 1} DE ${pages.size}",
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    color = MarinesWhite,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Black
+                )
+            }
+        }
+    }
 }
 
 // --- PANTALLA: REVISTA ---
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MagazineShelfScreen(magazines: List<MagazineItem>, isLoading: Boolean, onBack: () -> Unit) {
-    val context = LocalContext.current
-    Scaffold(
-        containerColor = MarinesBlack,
-        topBar = {
-            CenterAlignedTopAppBar(
-                title = { 
-                    Text(
-                        "REVISTA IMB", 
-                        fontWeight = FontWeight.Black, 
-                        color = MarinesWhite, 
-                        letterSpacing = 2.sp
-                    ) 
-                },
-                navigationIcon = { 
-                    IconButton(onClick = onBack) { 
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = MarinesWhite) 
-                    } 
-                },
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = MarinesBlack)
-            )
-        }
-    ) { padding ->
-        if (isLoading) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { 
-                CircularProgressIndicator(color = MarinesRed) 
+    var selectedMagazine by remember { mutableStateOf<MagazineItem?>(null) }
+    
+    if (selectedMagazine != null) {
+        MagazineReaderScreen(magazine = selectedMagazine!!, onBack = { selectedMagazine = null })
+    } else {
+        Scaffold(
+            containerColor = MarinesBlack,
+            topBar = {
+                CenterAlignedTopAppBar(
+                    title = { 
+                        Text(
+                            "REVISTA IMB", 
+                            fontWeight = FontWeight.Black, 
+                            color = MarinesWhite, 
+                            letterSpacing = 2.sp
+                        ) 
+                    },
+                    navigationIcon = { 
+                        IconButton(onClick = onBack) { 
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = MarinesWhite) 
+                        } 
+                    },
+                    colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = MarinesBlack)
+                )
             }
-        } else {
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
-                contentPadding = PaddingValues(16.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalArrangement = Arrangement.spacedBy(24.dp),
-                modifier = Modifier.padding(padding)
-            ) {
-                items(magazines) { magazine ->
-                    Column(
-                        modifier = Modifier.clickable { 
-                            if (magazine.fileUrl.isNotEmpty()) {
-                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(magazine.fileUrl)))
-                            }
-                        }
-                    ) {
-                        Card(
-                            shape = RoundedCornerShape(0.dp), // Estilo angular
-                            modifier = Modifier.fillMaxWidth().aspectRatio(0.7f),
-                            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        ) { padding ->
+            if (isLoading) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { 
+                    CircularProgressIndicator(color = MarinesRed) 
+                }
+            } else {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(2),
+                    contentPadding = PaddingValues(16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(24.dp),
+                    modifier = Modifier.padding(padding)
+                ) {
+                    items(magazines) { magazine ->
+                        Column(
+                            modifier = Modifier.clickable { selectedMagazine = magazine }
                         ) {
-                            Box {
-                                AsyncImage(
-                                    model = magazine.coverUrl,
-                                    contentDescription = null,
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentScale = ContentScale.Crop
-                                )
-                                // Indicador de "Nueva Edición"
-                                Box(
-                                    modifier = Modifier
-                                        .background(MarinesRed)
-                                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                                ) {
-                                    Text("EDICIÓN", color = MarinesWhite, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Black)
+                            Card(
+                                shape = RoundedCornerShape(0.dp),
+                                modifier = Modifier.fillMaxWidth().aspectRatio(0.7f),
+                                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+                            ) {
+                                Box {
+                                    val coverUrl = magazine.coverUrl.trim()
+                                    if (coverUrl.isNotEmpty()) {
+                                        SubcomposeAsyncImage(
+                                            model = ImageRequest.Builder(LocalContext.current)
+                                                .data(coverUrl)
+                                                .crossfade(true)
+                                                .listener(
+                                                    onError = { _, result ->
+                                                        android.util.Log.e("MagazineShelf", "Error loading cover: ${result.throwable.message}")
+                                                    }
+                                                )
+                                                .build(),
+                                            contentDescription = null,
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentScale = ContentScale.Crop,
+                                            loading = {
+                                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                                    CircularProgressIndicator(color = MarinesRed, modifier = Modifier.size(24.dp))
+                                                }
+                                            },
+                                            error = { state ->
+                                                val errorMsg = state.result.throwable.message ?: ""
+                                                Box(Modifier.fillMaxSize().background(Color.DarkGray), contentAlignment = Alignment.Center) {
+                                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                        Icon(Icons.Default.BrokenImage, null, tint = Color.Gray)
+                                                        if (errorMsg.isNotEmpty()) {
+                                                            Text(errorMsg, color = Color.Gray, fontSize = 8.sp, maxLines = 1)
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        )
+                                    } else {
+                                        Box(Modifier.fillMaxSize().background(Color.DarkGray), contentAlignment = Alignment.Center) {
+                                            Text("Sin Portada", color = Color.White, fontSize = 10.sp)
+                                        }
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .background(MarinesRed)
+                                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                                    ) {
+                                        Text("EDICIÓN", color = MarinesWhite, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Black)
+                                    }
                                 }
                             }
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Box(modifier = Modifier.width(20.dp).height(2.dp).background(MarinesRed))
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = magazine.title.uppercase(),
+                                color = MarinesWhite,
+                                fontWeight = FontWeight.Black,
+                                maxLines = 2,
+                                style = MaterialTheme.typography.labelLarge,
+                                lineHeight = 18.sp
+                            )
+                            Text(
+                                text = magazine.date,
+                                color = Color.Gray,
+                                style = MaterialTheme.typography.labelSmall
+                            )
                         }
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Box(modifier = Modifier.width(20.dp).height(2.dp).background(MarinesRed))
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = magazine.title.uppercase(),
-                            color = MarinesWhite,
-                            fontWeight = FontWeight.Black,
-                            maxLines = 2,
-                            style = MaterialTheme.typography.labelLarge,
-                            lineHeight = 18.sp
-                        )
-                        Text(
-                            text = magazine.date,
-                            color = Color.Gray,
-                            style = MaterialTheme.typography.labelSmall
-                        )
                     }
                 }
             }
@@ -722,7 +972,7 @@ fun ExploreCard(title: String, subtitle: String, imageUrl: String, onClick: () -
             .fillMaxWidth()
             .height(240.dp)
             .clickable { onClick() },
-        shape = RoundedCornerShape(0.dp) // Diseño angular
+        shape = RoundedCornerShape(0.dp)
     ) {
         Box {
             AsyncImage(
