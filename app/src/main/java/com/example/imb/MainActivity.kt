@@ -707,15 +707,26 @@ fun saveImageToGallery(context: Context, resId: Int) {
     }
 }
 
+// Función para corregir URLs de GitHub
+fun fixGitHubUrl(url: String): String {
+    val trimmed = url.trim()
+    return if (trimmed.contains("github.com") && trimmed.contains("/blob/")) {
+        trimmed.replace("github.com", "raw.githubusercontent.com")
+               .replace("/blob/", "/")
+    } else {
+        trimmed
+    }
+}
+
 // --- PANTALLA: LECTOR DE REVISTA (ESTILO EBOOK) ---
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MagazineReaderScreen(magazine: MagazineItem, onBack: () -> Unit) {
     val pages = remember(magazine.fileUrl) {
         if (magazine.fileUrl.isNotEmpty()) {
-            magazine.fileUrl.split(",").map { it.trim() }
+            magazine.fileUrl.split(",").map { fixGitHubUrl(it) }
         } else {
-            listOf(magazine.coverUrl)
+            listOf(fixGitHubUrl(magazine.coverUrl))
         }
     }
     val pagerState = rememberPagerState(pageCount = { pages.size })
@@ -863,7 +874,7 @@ fun MagazineShelfScreen(magazines: List<MagazineItem>, isLoading: Boolean, onBac
                                 elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
                             ) {
                                 Box {
-                                    val coverUrl = magazine.coverUrl.trim()
+                                    val coverUrl = fixGitHubUrl(magazine.coverUrl)
                                     if (coverUrl.isNotEmpty()) {
                                         SubcomposeAsyncImage(
                                             model = ImageRequest.Builder(LocalContext.current)
